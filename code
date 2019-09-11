@@ -1,0 +1,595 @@
+## Fixed Effects
+
+### Maximal Model
+
+fpath <- "D:/data/stat/293/q2/project/AGGO.txt"
+aggo <- read.table(fpath)
+
+# reformat data
+colnames(aggo) <- c("id","cholesterol","fitness","bodyfat","smoking","gender","time","V8","V9")
+
+aggo$smoking <- as.factor(ifelse(aggo$smoking, "Y", "N"))
+aggo$gender <- as.factor(ifelse(aggo$gender-1, "F", "M")) 
+aggo <- cbind(aggo, t.star = ifelse(aggo$time >= 4, aggo$time - 4, 0))
+
+# define maximal model mean structure
+mean.struct <- formula("cholesterol ~ fitness*time + bodyfat*time 
+                                    + smoking*time + gender*time + gender*bodyfat")
+
+colnames(aggo) <- c("id","cholesterol","fitness","bodyfat","smoking","gender","time","V8","V9")
+
+aggo$smoking <- as.factor(ifelse(aggo$smoking, "Y", "N"))
+aggo$gender <- as.factor(ifelse(aggo$gender-1, "F", "M")) 
+aggo <- cbind(aggo, t.star = ifelse(aggo$time >= 4, aggo$time - 4, 0))
+
+mean.struct <- formula("cholesterol ~ fitness*time + bodyfat*time + smoking*time + gender*time + gender*bodyfat")
+
+### Covariance Structure Selection
+
+require(nlme)
+
+# compare heterogeneous/homogeneous variance structures
+
+m.max <- gls(mean.struct,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corSymm(form = ~1 | id),
+             method = "REML")
+
+m.symm <- gls(mean.struct,
+             data = aggo,
+             correlation = corSymm(form = ~1 | id),
+             method = "REML")
+
+m.uns <- m.max
+symmetric <- m.symm
+
+anova(m.uns, m.symm)
+
+# compare covariance structures
+
+m.toep <- gls(mean.struct,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corARMA(form = ~1 | id, p = 5),
+             method = "REML")
+
+m.ar <- gls(mean.struct,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corAR1(form = ~1 | id),
+             method = "REML")
+
+m.cs <- gls(mean.struct,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corCompSymm(form = ~1 | id),
+             method = "REML")
+
+# LR tests for nested models
+
+anova(m.uns, m.toep, m.ar)
+
+anova(m.uns, m.toep, m.cs)
+
+### Mean Structure Selection
+
+require(MuMIn)
+require(parallel)
+
+# fit the maximal model by ML
+
+m.max <- gls(mean.struct,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corSymm(form = ~1 | id),
+             method = "ML")
+
+num.cores <- detectCores() - 1
+p.cluster <- makeCluster(num.cores)
+clusterExport(p.cluster, "m.max")
+clusterExport(p.cluster, "aggo")
+clusterEvalQ(p.cluster, library(nlme))
+
+start.time <- Sys.time()
+
+# fit every model in model set, evaluate by AIC
+
+pdredge.out <- pdredge(m.max, cluster = p.cluster, rank = "AIC")
+
+end.time <- Sys.time()
+
+end.time - start.time
+
+stopCluster(p.cluster)
+
+# fit model selected by AIC
+
+m.linear <- gls(cholesterol ~ bodyfat*time + smoking*time + gender*time + gender*bodyfat,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corSymm(form = ~1 | id),
+             method = "ML")
+
+### Spline Model
+
+# add spline terms to the model
+
+m.fspline <- gls(cholesterol ~ time + t.star + bodyfat + smoking + gender
+                         + bodyfat:time + bodyfat:t.star
+                         + smoking:time + smoking:t.star
+                         + gender:time + gender:t.star
+                         + gender:bodyfat,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corSymm(form = ~1 | id),
+             method = "ML")
+
+m.fspline.reml <- gls(cholesterol ~ time + t.star + bodyfat + smoking + gender
+                         + bodyfat:time + bodyfat:t.star
+                         + smoking:time + smoking:t.star
+                         + gender:time + gender:t.star
+                         + gender:bodyfat,
+             data = aggo,
+             weights = varIdent(form = ~ 1 | as.factor(time)),
+             correlation = corSymm(form = ~1 | id),
+             method = "REML")
+
+AIC(m.fspline)
+anova(m.fspline, m.linear)
+
+## Mixed Effects
+
+###Random Effect Selection
+
+# intercept only
+m.e1 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = ~ 1| id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+# intercept + time
+m.e2 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = ~ time | id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+# intercept + time + spline
+m.e3 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = ~ time + t.star | id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+AIC(m.e1)
+AIC(m.e2)
+AIC(m.e3)
+
+###G-side Covariance Selection
+
+# diagonal G
+m.g1 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = list(id=pdDiag(~time + t.star)),
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+# compound symmetric G
+m.g2 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = list(id=pdCompSymm(~time + t.star)),
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+# unstructured G
+m.g3 <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                                + bodyfat:time + bodyfat:t.star
+                                + smoking:time + smoking:t.star
+                                + gender:time + gender:t.star
+                                + gender:bodyfat,
+                random = ~ time + t.star | id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+AIC(m.g1)
+AIC(m.g2)
+AIC(m.g3)
+
+```
+
+###Final Mixed-Effects Model
+
+m.mspline <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                         + bodyfat:time + bodyfat:t.star
+                         + smoking:time + smoking:t.star
+                         + gender:time + gender:t.star
+                         + gender:bodyfat,
+                random = ~ time + t.star | id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "ML")
+
+m.mspline.reml <- lme(fixed = cholesterol ~ time + t.star + bodyfat + smoking + gender
+                         + bodyfat:time + bodyfat:t.star
+                         + smoking:time + smoking:t.star
+                         + gender:time + gender:t.star
+                         + gender:bodyfat,
+                random = ~ time + t.star | id,
+                data = aggo,
+                weights = varIdent(form = ~ 1 | as.factor(time)),
+                method = "REML")
+
+AIC(m.mspline)
+
+## Hypothesis Testing
+
+### Time Tests
+
+library(clubSandwich)
+
+# use REML fixed-effects model for inference
+sandwich.est = vcovCR(m.fspline.reml, cluster = aggo$id, type = "CR0")
+
+beta = m.fspline$coefficients
+
+tests = matrix(nrow = 10, ncol = 4)
+
+# test 1, omnibus test for all time and spline terms,
+# testing to see if there is any time effect at all
+
+l1 = matrix(rbind(c(0, 1, rep(0, 11)), c(0, 0, 1, rep(0, 10)),
+                  c(rep(0, 6), 1, rep(0, 6)), c(rep(0, 7), 1, rep(0, 5)),
+                  c(rep(0, 8), 1, rep(0, 4)), c(rep(0, 9), 1, rep(0,3)),
+                  c(rep(0, 10), 1, rep(0, 2)), c(rep(0, 11), 1, 0)), nrow = 8) #omnibus time matrix
+
+tests[1,3] = t1.chi = t(l1%*%beta)%*%(solve(l1%*%sandwich.est%*%t(l1)))%*%(l1%*%beta)
+
+tests [1,4] = pchisq(t1.chi, df = nrow(l1), lower.tail = FALSE)
+#small p-value obviously, there is an overall time effect
+
+# test 2, testing B3 = B8 = B10 = B12 = 0 or that there is no spline time effect
+
+l2 = matrix(rbind(c(0, 0, 1, rep(0, 10)), c(rep(0, 7), 1, rep(0, 5)),
+                  c(rep(0, 9), 1, rep(0, 3)), c(rep(0, 11), 1, 0)), nrow = 4)
+
+tests[2,3] = t2.chi = t(l2%*%beta)%*%(solve(l2%*%sandwich.est%*%t(l2)))%*%(l2%*%beta)
+
+tests[2,4] = pchisq(t2.chi, df = nrow(l2), lower.tail = FALSE)
+#p-value very small, there is a spline time effect
+
+# test 3, testing B6 = B11 = B12 = B13 = 0, testing to see if there is an overall gender effect
+
+l3 = matrix(rbind(c(rep(0, 5), 1, rep(0, 7)), c(rep(0, 10), 1, rep(0, 2)),
+                  c(rep(0, 11), 1, 0), c(rep(0,12),1)), nrow = 4)
+
+tests[3,3] = t3.chi = t(l3%*%beta)%*%(solve(l3%*%sandwich.est%*%t(l3)))%*%(l3%*%beta)
+
+tests[3,4] = pchisq(t3.chi, df = nrow(l3), lower.tail = FALSE)
+#small p-value, overall gender effect present
+
+# test 4, testing B11 = B12 = 0, 
+# testing to see if there is any difference in the overall rate of change by gender
+
+l4 = matrix(rbind(c(rep(0, 10), 1, 0, 0), c(rep(0, 11), 1, 0)), nrow = 2)
+
+tests[4,3] = t4.chi = t(l4%*%beta)%*%(solve(l4%*%sandwich.est%*%t(l4)))%*%(l4%*%beta)
+
+tests[4,4] = pchisq(t4.chi, df = nrow(l4), lower.tail = FALSE)
+#small p-value, there is a significant difference in the overall rate of change by gender
+
+# test 5, testing B11 = 0, is there a difference in rate of change by gender before t = 4
+
+l5 = matrix(c(rep(0, 10), 1, 0 ,0), nrow = 1)
+
+tests[5,3] = t5.chi = t(l5%*%beta)%*%(solve(l5%*%sandwich.est%*%t(l5)))%*%(l5%*%beta)
+
+tests[5,4] = pchisq(t5.chi, df = nrow(l5), lower.tail = FALSE) #p value small, yes
+
+# test 6, B12 = 0, is the change in the slopes at t = 4 significantly different for men and women.
+
+l6 = matrix(c(rep(0, 11), 1, 0), nrow = 1)
+
+tests[6,3] = t6.chi = t(l6%*%beta)%*%(solve(l6%*%sandwich.est%*%t(l6)))%*%(l6%*%beta)
+
+tests[6,4] = pchisq(t6.chi, df = nrow(l6), lower.tail = FALSE)
+#pvalue small, yes
+
+# test 7 B11 + B12 = 0, is there a difference in rate of change by gender after t = 4
+
+l7 = matrix(c(rep(0, 10), 1, 1, 0), nrow = 1)
+
+tests[7,3] = t7.chi = t(l7%*%beta)%*%(solve(l7%*%sandwich.est%*%t(l7)))%*%(l7%*%beta)
+
+tests[7,4] = pchisq(t7.chi, df = nrow(l7), lower.tail = FALSE)
+
+### Smoking Tests
+
+# test 8, testing B5 = B9 = B10 = 0, testing for overall smoking effect
+
+l8 = matrix(rbind(c(rep(0, 4), 1, rep(0, 8)), c(rep(0, 8), 1, rep(0, 4)),
+                  c(rep(0, 9), 1, rep(0, 3))), nrow = 3)
+
+tests[8,3] = t8.chi = t(l8%*%beta)%*%(solve(l8%*%sandwich.est%*%t(l8)))%*%(l8%*%beta) 
+#p-value large, seems that there is no smoking effect
+
+tests[8,4] = pchisq(t8.chi, df = nrow(l8), lower.tail = FALSE)
+
+### Body Fat Tests
+
+#test 9, testing B4 = B7 = B8 = B13 = 0, omnibus test for bodyfat effect
+
+l9 = matrix(rbind(c(rep(0, 3), 1, rep(0, 9)), c(rep(0, 6), 1, rep(0, 6)),
+                  c(rep(0, 7), 1, rep(0, 5)), c(rep(0, 12), 1)), nrow = 4)
+
+tests[9,3] = t9.chi = t(l9%*%beta)%*%(solve(l9%*%sandwich.est%*%t(l9)))%*%(l9%*%beta)
+
+tests[9,4] = pchisq(t9.chi, df = nrow(l9), lower.tail = FALSE)
+#p-val is small, looks like there is an overall bodyfat effect
+
+#test 10 , testing B7 = B8 = 0, test for no effect of body fat on cholesterol level rate of change
+
+l10 = matrix(rbind(c(rep(0,6), 1, rep(0,6)), c(rep(0,7), 1, rep(0,5))), nrow = 2)
+
+tests[10, 3] = t10.chi =  t(l10%*%beta)%*%(solve(l10%*%sandwich.est%*%t(l10)))%*%(l10%*%beta)
+
+tests[10,4] = pchisq(t10.chi, df = nrow(l10), lower.tail = FALSE)
+
+tests = cbind(tests[,-4], round(tests[,4], 4))
+
+
+## Plots
+
+
+require(RColorBrewer)
+l.col <- brewer.pal(9, "Set1")
+base.col <- "black"
+p.char = 15
+p.offset = 0.04
+alpha = 35
+alpha.l = 65
+
+
+t.grid <- seq(from = 1, to = 6, length.out = 200)
+
+bf.F <- c(mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 1]),
+          mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 2]),
+          mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 3]),
+          mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 4]),
+          mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 5]),
+          mean(aggo$bodyfat[aggo$gender == "F" & aggo$time == 6]))
+bf.M <- c(mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 1]),
+          mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 2]),
+          mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 3]),
+          mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 4]),
+          mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 5]),
+          mean(aggo$bodyfat[aggo$gender == "M" & aggo$time == 6]))
+
+w <- matrix(data = 0, nrow = length(t.grid), ncol = 6)
+
+for(i in 1:length(t.grid)){
+ 
+  for(j in 1:5){
+   
+    if(t.grid[i] <= (j+1) & t.grid[i] >= j){
+     
+      w[i,(j+1)] <- abs(t.grid[i]-j)
+      w[i,j] <- abs(t.grid[i]-(j+1))
+       
+    }
+    
+  }
+  
+}
+
+bf.F.wm <- rep(0, length(t.grid))
+bf.M.wm <- rep(0, length(t.grid))
+for(i in 1:length(t.grid)){
+  
+  bf.F.wm[i] <- weighted.mean(bf.F, w = w[i,])
+  bf.M.wm[i] <- weighted.mean(bf.M, w = w[i,])
+  
+}
+
+pred <- data.frame(time = c(t.grid, t.grid),
+                   t.star = c(ifelse(t.grid >= 4, t.grid - 4, 0), ifelse(t.grid >= 4, t.grid - 4, 0)),
+                   bodyfat = c(bf.F.wm, bf.M.wm),
+                   smoking = rep("N", 2*length(t.grid)),
+                   gender = c(rep("F", length(t.grid)),rep("M", length(t.grid)))) 
+
+### Exploratory Plots
+
+plot(cholesterol[gender == "F"] ~ I(time[gender == "F"]-p.offset),
+     data = aggo,
+     col = "white",
+     pch = p.char,
+     xlim = c(min(aggo$time),max(aggo$time)),
+     ylim = c(min(aggo$cholesterol),max(aggo$cholesterol)),
+     xlab = "Time", ylab = "Cholesterol",
+     main = "Individual Cholesterol Levels over Time")
+
+for(i in unique(aggo$id)){
+
+  points(cholesterol[gender == "F" & id == i] ~ I(time[gender == "F" & id == i]),
+         type = "l", data = aggo, col = paste(l.col[1], alpha.l, sep = ""), lwd = 2)   
+  points(cholesterol[gender == "M" & id == i] ~ I(time[gender == "M" & id == i]),
+         type = "l", data = aggo, col = paste(l.col[2], alpha.l, sep = ""), lwd = 2) 
+ 
+}
+
+abline(v = 4, col = l.col[4], lwd = 2, lty = 2)
+legend("topleft", lty = 1, col = l.col[1:2], legend = c("Female","Male"), lwd = 2)
+
+t <- 1:6
+f.means <- rep(0, 6)
+m.means <- rep(0, 6)
+for(i in t){
+  
+  f.means[i] <- mean(aggo$cholesterol[aggo$gender == "F" & aggo$time == i])
+  m.means[i] <- mean(aggo$cholesterol[aggo$gender == "M" & aggo$time == i])
+  
+}
+
+plot(cholesterol[gender == "F"] ~ I(time[gender == "F"]-p.offset),
+     data = aggo,
+     col = "white",
+     pch = p.char,
+     xlim = c(min(aggo$time),max(aggo$time)),
+     ylim = c(min(aggo$cholesterol),max(aggo$cholesterol)),
+     xlab = "Time", ylab = "Cholesterol",
+     main = "Mean Cholesterol over Time")
+points(cholesterol[gender == "F"] ~ I(time[gender == "F"]-p.offset),
+       pch = p.char,
+       data = aggo, col = paste(l.col[1], alpha, sep = ""))
+points(cholesterol[gender == "M"] ~ I(time[gender == "M"]+p.offset),
+       pch = p.char,
+       data = aggo, col = paste(l.col[2], alpha, sep = ""))
+points(f.means ~ t, type = "l", data = aggo, col = l.col[1], lwd = 2)
+points(m.means ~ t, type = "l", data = aggo, col = l.col[2], lwd = 2)
+
+legend("topleft", lty = 1, col = l.col[1:2], legend = c("Female","Male"), lwd = 2)
+
+### Model Plots
+
+par(mfrow = c(1,1))
+
+plot(cholesterol[gender == "F" & smoking == "N"] ~ I(time[gender == "F" & smoking == "N"]-p.offset),
+     data = aggo,
+     col = paste(l.col[1], alpha, sep = ""),
+     pch = p.char,
+     xlim = c(min(aggo$time),max(aggo$time)),
+     ylim = c(min(aggo$cholesterol),max(aggo$cholesterol)),
+     xlab = "Time", ylab = "Cholesterol",
+     main = "Mean Response over Time")
+points(cholesterol[gender == "M" & smoking == "N"] ~ I(time[gender == "M" & smoking == "N"]+p.offset),
+       pch = p.char,
+       data = aggo, col = paste(l.col[2], alpha, sep = ""))
+
+fitted <- predict(m.fspline.reml, newdata = pred)
+
+points(fitted[1:200] ~ t.grid, type = "l", lwd = 2, col = l.col[1])
+points(fitted[201:400] ~ t.grid, type = "l", lwd = 2, col = l.col[2])
+
+legend("topleft", lty = 1, col = l.col[1:2], legend = c("Female","Male"), lwd = 2)
+
+
+####Residual Plots
+
+require(np)
+options(np.messages = F)
+
+# add.smooth(x, y, h, ...)
+#
+# Adds a local linear smooth for y ~ x with bandwidth h. 
+add.smooth <- function(x, y, lcol = l.col[1], h = NULL){
+
+  require(np)
+  if(!(is.null(h))){
+    m.ll <- npreg(y ~ x, bws = h, regtype = "ll") 
+  }else{
+    return(NULL)
+  }
+  
+  x.seq <- seq(from=min(x),to=max(x), length.out=250)
+  x.grid <- data.frame(x = x.seq)
+  y.hat <- predict(m.ll, newdata = x.grid)
+
+  points(y.hat ~ x.seq, type = "l", lty = 1, lwd = 2, col = lcol)
+  
+
+
+}
+
+# plot.diag(model, type)
+#
+# Plots residual diagnostic plots for specified model.
+plot.diag <- function(model, type = "fixed"){
+
+  if(type == "fixed"){
+    L <- t(chol(getVarCov(model)))
+  }else if(type == "random"){
+    L <- t(chol(getVarCov(model, type="marginal")[[1]]))
+  }else{
+    return(NULL)
+  }
+  
+  L.inv <- solve(L)
+  r <- resid(model)
+  y.hat <- fitted(model)
+  t <- aggo$time
+  bf <- aggo$bodyfat
+  
+  N <- nrow(aggo)
+  m <- N/6
+  
+  r.t <- rep(0, N)
+  y.hat.t <- r.t
+  t.t <- r.t
+  bf.t <- r.t
+  
+  for(i in 0:(m-1)){
+   
+    r.t[(1+6*i):(6+6*i)] <- L.inv%*%r[(1+6*i):(6+6*i)]
+    y.hat.t[(1+6*i):(6+6*i)] <- L.inv%*%y.hat[(1+6*i):(6+6*i)]
+    t.t[(1+6*i):(6+6*i)] <- L.inv%*%t[(1+6*i):(6+6*i)]
+    bf.t[(1+6*i):(6+6*i)] <- L.inv%*%bf[(1+6*i):(6+6*i)] 
+    
+  }
+  
+  par(mfrow = c(1,2))
+  
+  plot(r.t ~ y.hat.t,
+       main = "Residuals vs. Fitted Values",
+       ylab = "Transformed Residual",
+       xlab = "Transformed Fitted Value")
+  abline(h = 0, col = l.col[2], lty = 2, lwd = 2)
+  add.smooth(y.hat.t, r.t, h = 1.5)
+
+  qqnorm(r.t,
+         main = "Q-Q Residual",
+         ylab = "Transformed Residual Quantile",
+         xlab = "Standard Normal Quantile")
+  abline(a = 0, b = 1, col = l.col[2], lty = 2, lwd = 2)
+  
+  plot(r.t ~ t.t,
+       main = "Residuals vs. Time",
+       ylab = "Transformed Residual",
+       xlab = "Transformed Time")
+  abline(h = 0, col = l.col[2], lty = 2, lwd = 2)
+  add.smooth(t.t, r.t, h = 1)
+
+  plot(r.t ~ bf.t,
+       main = "Residuals vs. Body Fat",
+       ylab = "Transformed Residual",
+       xlab = "Transformed Body Fat")
+  abline(h = 0, col = l.col[2], lty = 2, lwd = 2)
+ add.smooth(bf.t, r.t, h = 2)
+
+  par(mfrow = c(1,1))
+
+}
+
+plot.diag(m.fspline.reml)
+plot.diag(m.mspline.reml, type = "random")
